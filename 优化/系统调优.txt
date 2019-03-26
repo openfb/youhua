@@ -1,0 +1,414 @@
+调优
+
+	系统调优
+		CPU、内存、硬盘、网卡
+		
+	应用调优
+		nginx, mysql, php-fpm 
+	
+	代码调优
+		--- 尽可能少量占用内存、尽可能减少硬盘IO
+
+	
+系统调优：
+
+1、CPU 
+
+	按时间切片调度执行多个任务
+
+	绑定进程与CPU核心的亲缘性 
+	
+		# taskset -p -c <cpu_number> <pid>
+
+		# taskset -p -c 1 9978
+		
+		# watch -n 1 "ps -eo pid,args,psr | grep http
+
+	
+	nginx配置文件
+	
+		worker_cpu_affinity auto;
+
+	查看CPU性能：
+		top   uptime  lscpu	 
+		mpstat   vmstat  dstat
+		
+		
+2、内存
+
+	基本概念：
+		物理地址、逻辑地址
+		页、框
+		脏页
+		干净页 
+		
+	内存大页机制：
+		匿名大页   
+			预先分配
+			
+		透明大页 
+			按需分配 
+		
+	Java/hadoop大数据：
+		
+		[root@centos ~]# echo 20 > /proc/sys/vm/nr_hugepages
+		[root@centos ~]# grep -i "hugepage" /proc/meminfo 
+
+	关闭透明大页 Transparent Huge Page 	THP 
+	
+		[root@node01 ~]# echo never > /sys/kernel/mm/transparent_hugepage/enabled
+		[root@node01 ~]# cat /sys/kernel/mm/transparent_hugepage/enabled
+		always madvise [never]
+		[root@node01 ~]# 
+	
+		
+	OOM   Out Of Memory  内存超出 		/var/log/messages  
+		内核会启动oom killer机制, 根据进程oom_score分数杀
+			
+		
+	针对缓存服务器(redis/memcached)	
+		
+		/proc/sys/vm/overcommit_memory
+		
+		[root@centos 2678]# echo 1 > /proc/sys/vm/overcommit_memory
+
+		
+		overcommit_memory取值：
+			0：默认，启动进程时，物理内存是否有足够剩余空间启动；有，进程启动，不足，内存返回进程错误信息
+			1：允许进程使用所有物理内存；针对缓存服务器 
+			2：允许进程使用超过物理内存大小的空间， overcommit_ratio 		memory + swap * overcommit_ratio
+			
+				[root@test_server ~]# cat /proc/sys/vm/overcommit_ratio 
+				50
+
+		
+		
+	进程间通信 IPC
+	
+		安装Oracle数据库
+	
+		共享内存 shared memory 
+		
+			/proc/sys/kernel/shmmni
+				在全系统范围内，允许使用的最大共享内存段上限
+				
+			/proc/sys/kernel/shmall
+				全系统范围中，可以为共享内存分配使用的最大页面数
+		
+			/proc/sys/kernel/shmmax 
+				针对单个进程，指定可以被创建的共享内存段的大小上限
+			
+		
+		消息队列  message queue 
+		
+			1) 单个消息队列的最大字节数
+
+				[root@ca ~]# cat /proc/sys/kernel/msgmnb 
+				
+			2) 系统范围内，最多可以有多少个消息队列 
+
+				[root@ca ~]# cat /proc/sys/kernel/msgmni 
+				960
+
+
+			3) 指定进程间通信时使用的消息的最大上限，单位是字节 
+
+				[root@ca ~]# cat /proc/sys/kernel/msgmax 
+				8192
+		
+		
+		
+	内存查看：
+
+			free -m 
+			
+			top 
+			
+			vmstat
+		
+		
+		
+			
+		
+3、硬盘 
+
+	提升磁盘IO 
+		1) SSD 
+		2) 硬盘IO调度算法 	/sys/block/sda/queue/scheduler
+		
+		   1、CFQ	完全公平队列  
+
+			CFQ为每个进程/线程单独创建一个队列来管理该进程所产生的请求，也就是说每个进程一个队列，各队列之间的调度使用时间片来调度，以此来保证每个进程都能被很好的分配I/O带宽。
+			I/O调度器每次扫行一个进程的4次请求 
+			
+			默认调度器只适用于标识为 SATA 硬盘的设备
+			
+			
+
+		   2、NOOP No Operation 
+
+			NOOP实现了一个简单的FIFO队列，在队列中对I/O请求进行组织，当有一个新的请求到来时，它将请求合并到最近的请求之后，以此来保证请求同一个介质
+			
+			
+			对于使用最快存储的受 CPU 限制的系统，这是最佳调度器。
+			
+
+		   3、Deadline 
+
+			Deadline确保了在一个截止时间内服务请求
+			
+			除了 SATA 磁盘为所有块设备的默认 I/O 调度器
+	
+		
+		查看磁盘IO命令：
+			iostat
+			iotop -p <PID>
+		
+		
+		
+		
+4、网卡 
+
+	提高网卡I/O，接收更多的访问请求 
+	
+	
+	内核参数：
+	
+		1) /proc/sys/net/core/somaxconn		800--1000 
+		
+			用来限制监听(LISTEN)队列最大数据包的数量
+			
+		2) /proc/sys/net/ipv4/tcp_max_syn_backlog
+		
+			设置网卡接收三次握手中的第一个请求的队列长度 
+		
+		3) /proc/sys/net/ipv4/tcp_rmem
+		
+			设置网卡读取数据的缓存区大小 
+		
+		4) /proc/sys/net/ipv4/tcp_wmem
+		
+			设置网卡写入数据的缓冲区大小 
+		
+		5) /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_time_wait
+		
+			设置TIME_WAIT状态的TCP连接的超时时间，单位s；调小此值 
+	
+		6) /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_close_wait
+		
+			设置CLOSE_WAIT状态的TCP连接的超时时间，单位s; 调小此值 
+			
+		7) /proc/sys/net/netfilter/nf_conntrack_tcp_timeout_fin_wait
+
+			设置FIN_WAIT状态的TCP连接的超时时间，单位s；调小此值 
+			
+		8)	/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_syn_recv 
+		
+			设置SYN_RECV状态的TCP连接的超时时间，单位s；调小此值；一定程序减缓DDOS攻击
+			
+			
+		
+			
+	
+	双网卡绑定
+		负载均衡
+		高可用
+	
+	centos 7： team
+
+		工作模式：
+			activebackup	高可用 	
+			loadbalance		负载均衡 
+			roundrobin		负载均衡， 需要交换机端做端口绑定
+	
+			1、创建虚拟网卡team0
+
+			[root@node01 ~]# nmcli connection add type team ifname team0 con-name team0 config '{"runner":{"name":"activebackup"}}'
+			 
+			[root@node01 ~]# nmcli connection show 
+
+
+
+			2、绑定物理网卡 
+
+			[root@node01 ~]# nmcli connection add type team-slave ifname eth1 con-name team0-eth1 master team0 
+			成功添加的连接 'team0-eth1'（633d2ccc-0a47-4b59-aaf4-2c0f4582815e）。
+			 
+			[root@node01 ~]# nmcli connection add type team-slave ifname eth2 con-name team0-eth2 master team0 
+			成功添加的连接 'team0-eth2'（5fe7332d-04fd-4678-a8af-32cfcea663d3）。
+			[root@node01 ~]# 
+
+
+			[root@node01 ~]# nmcli connection show 
+			名称        UUID                                  类型            设备  
+			有线连接 2  eda38a28-f98f-4437-b73a-ce235c02f3b2  802-3-ethernet  eth1  
+			有线连接 1  9591ae5c-356e-43b1-a003-80f6c4e1acdb  802-3-ethernet  eth2  
+			eth0        bf2dca4b-5385-4ac9-88aa-ee8cf413aab5  802-3-ethernet  eth0  
+			team0-eth2  5fe7332d-04fd-4678-a8af-32cfcea663d3  802-3-ethernet  --    
+			team0-eth1  633d2ccc-0a47-4b59-aaf4-2c0f4582815e  802-3-ethernet  --    
+			team0       1bc3c044-3b64-40f4-ae7b-1703c6d4df33  team            team0 
+
+
+
+			3、配置ip
+
+			[root@node01 ~]# nmcli connection modify team0 ipv4.addresses "192.168.122.111/24"
+			[root@node01 ~]# nmcli connection modify team0 ipv4.gateway "192.168.122.1"
+			[root@node01 ~]# nmcli connection modify team0 ipv4.dns 114.114.114.114
+			[root@node01 ~]# nmcli connection modify team0 ipv4.method manual
+			[root@node01 ~]# nmcli connection reload 
+			[root@node01 ~]# nmcli connection up team0
+
+
+			4、查看team1状态 
+
+			[root@localhost ~]# teamdctl team1 state
+			setup:
+			  runner: activebackup
+			ports:
+			  eth1
+				link watches:
+				  link summary: up
+				  instance[link_watch_0]:
+					name: ethtool
+					link: up
+					down count: 0
+			  eth2
+				link watches:
+				  link summary: up
+				  instance[link_watch_0]:
+					name: ethtool
+					link: up
+					down count: 0
+			runner:
+			  active port: eth2
+			[root@localhost ~]# 
+
+
+
+			5、断开激活的设备
+
+			[root@localhost ~]# nmcli device disconnect eth2 
+
+			[root@localhost ~]# teamdctl team1 state
+			setup:
+			  runner: activebackup
+			ports:
+			  eth1
+				link watches:
+				  link summary: up
+				  instance[link_watch_0]:
+					name: ethtool
+					link: up
+					down count: 0
+			runner:
+			  active port: eth1
+			[root@localhost ~]# 
+
+
+
+
+			6、再次启动eth2网卡 
+
+			[root@localhost ~]# nmcli device connect eth2 
+			[root@localhost ~]# teamdctl team1 state
+			setup:
+			  runner: activebackup
+			ports:
+			  eth1
+				link watches:
+				  link summary: up
+				  instance[link_watch_0]:
+					name: ethtool
+					link: up
+					down count: 0
+			  eth2
+				link watches:
+				  link summary: up
+				  instance[link_watch_0]:
+					name: ethtool
+					link: up
+					down count: 0
+			runner:
+			  active port: eth1
+			[root@localhost ~]# 
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	centos 6:  bond
+	
+			工作模式：	
+				0： 高可用 
+				6：负载均衡 
+		
+			前提：关闭NetworkManager 
+			
+			# service NetworkManager stop 
+			# chkconfig NetworkManager off 
+			
+			
+			
+		1、确认关闭NetworkManager服务 
+
+		2、内核加载bond
+
+		[root@localhost ~]# cat /etc/modprobe.d/bonding.conf 
+			alias netdev-bond0 bonding
+	
+
+		3、分别创建bond0网卡、物理网卡配置文件 
+
+		[root@localhost ~]# cat /etc/sysconfig/network-scripts/ifcfg-bond0 
+
+			DEVICE=bond0
+			TYPE=Ethernet
+			ONBOOT=yes
+			BOOTPROTO=none
+			IPADDR=10.1.1.11
+			PREFIX=24
+			BONDING_OPTS="miimon=80 mode=6"
+
+		[root@localhost ~]# cat /etc/sysconfig/network-scripts/ifcfg-eth0
+
+			DEVICE="eth0"
+			BOOTPROTO="none"
+			ONBOOT="yes"
+			TYPE="Ethernet"
+			MASTER=bond0
+			SLAVE=yes
+
+		[root@localhost ~]# cat /etc/sysconfig/network-scripts/ifcfg-eth1
+
+			DEVICE=eth1
+			ONBOOT=yes
+			TYPE=Ethernet
+			BOOTPROTO=none
+			MASTER=bond0
+			SLAVE=yes
+
+		4、重启network服务，查看网卡状态
+
+		[root@localhost ~]# /etc/init.d/network restart
+		[root@localhost ~]# 
+		[root@localhost ~]# ifconfig bond0
+		bond0     Link encap:Ethernet  HWaddr 52:54:00:EA:E7:D1  
+				  inet addr:10.1.1.11  Bcast:10.1.1.255  Mask:255.255.255.0
+				  inet6 addr: fe80::5054:ff:feea:e7d1/64 Scope:Link
+				  UP BROADCAST RUNNING MASTER MULTICAST  MTU:1500  Metric:1
+				  RX packets:1703 errors:0 dropped:0 overruns:0 frame:0
+				  TX packets:1500 errors:0 dropped:0 overruns:0 carrier:0
+				  collisions:0 txqueuelen:0 
+				  RX bytes:133485 (130.3 KiB)  TX bytes:130075 (127.0 KiB)
+
+		[root@localhost ~]# 
+		
+		
+		
+	

@@ -1,0 +1,59 @@
+pam资源限制 
+
+	pam_limit.so 系统资源限制 
+	
+		/etc/security/limits.conf  配置文件		6.X 
+	
+		/etc/systemd/system.conf 		7.X 
+		
+			DefaultLimitNOFILE=65535
+			DefaultLimitNPROC=
+
+
+	
+	语法：
+		<domain>        <type>  <item>  <value>
+
+		<domain>：用户名, @用户组名, * 
+		type: 
+			soft
+			hard
+		item：
+			nofile	number of file  进程所能使用文件描述符(fd)数量
+			
+				高并发应用场景 
+				
+				socket: Too many open files (24)		服务器端文件描述符数量小 
+				
+				1) 查看当前文件描述符数量 
+				
+					# ulimit -n 
+					
+					# ulimit -a 
+
+				2) 修改文件描述符数量  
+				
+					[root@localhost ~]# ulimit -n
+					1024
+					[root@localhost ~]# ulimit -n 65535			//临时 
+					[root@localhost ~]# 
+					[root@localhost ~]# ulimit -n
+					65535
+
+				
+			nproc	打开最大进程数 
+			
+	
+		martin  hard    nproc 10
+
+		
+		
+		
+	
+	
+
+
+
+
+	
+	
